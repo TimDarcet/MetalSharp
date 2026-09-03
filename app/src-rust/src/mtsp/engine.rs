@@ -69,10 +69,8 @@ static M12_EFFECTIVE_NODE: OnceLock<PipelineNode> = OnceLock::new();
 /// The M12 pipeline node for the vkd3d-proton graphics stack:
 /// D3D12 -> vkd3d-proton -> Vulkan -> MoltenVK -> Metal.
 ///
-/// Deploys vkd3d-proton's `d3d12.dll` + `d3d12core.dll` plus DXVK's
-/// `dxgi.dll` (vkd3d-proton ships no dxgi of its own) into the game dir,
-/// routes D3D12/DXGI through the vkd3d-proton lane, and points the Vulkan
-/// loader at the VKMT MoltenVK ICD.
+/// Deploys vkd3d-proton's D3D12 DLLs and DXVK's DXGI/D3D11 DLLs into the game
+/// dir, then points the Vulkan loader at the VKMT MoltenVK ICD.
 fn m12_vkd3d_proton_node() -> PipelineNode {
     PipelineNode {
         id: PipelineId::M12,
@@ -93,15 +91,12 @@ fn m12_vkd3d_proton_node() -> PipelineNode {
                 dest_filename: None,
             },
             DllDeploy { source_subpath: "lib/dxvk/x86_64-windows", filename: "dxgi.dll", dest_filename: None },
-            // DXVK d3d11 rides along so D3D11 games switched to the
-            // M12 route get a working render path (vkd3d-proton serves
-            // D3D12 only; a D3D11 game without native D3D11 falls to
-            // wine builtin d3d11 -> "Not a DXMT adapter").
             DllDeploy { source_subpath: "lib/dxvk/x86_64-windows", filename: "d3d11.dll", dest_filename: None },
         ],
         env_vars: vec![
             EnvVar { key: "MVK_PRESENT_MODE", value: "1" },
             EnvVar { key: "VKMT_ALLOW_NON_SINGLE_TEXEL_ALIGNMENT", value: "1" },
+            EnvVar { key: "MVK_CONFIG_USE_METAL_PRIVATE_API", value: "1" },
             EnvVar { key: "MVK_CONFIG_FORCE_RETAINED_COMMAND_BUFFERS", value: "1" },
         ],
         launch_args: vec!["-windowed", "-ResX=1280", "-ResY=720", "-ForceRes"],
@@ -153,15 +148,12 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                         dest_filename: None,
                     },
                     DllDeploy { source_subpath: "lib/dxvk/x86_64-windows", filename: "dxgi.dll", dest_filename: None },
-                    // DXVK d3d11 rides along so D3D11 games switched to the
-                    // M12 route get a working render path (vkd3d-proton serves
-                    // D3D12 only; a D3D11 game without native D3D11 falls to
-                    // wine builtin d3d11 -> "Not a DXMT adapter").
                     DllDeploy { source_subpath: "lib/dxvk/x86_64-windows", filename: "d3d11.dll", dest_filename: None },
                 ],
                 env_vars: vec![
                     EnvVar { key: "MVK_PRESENT_MODE", value: "1" },
                     EnvVar { key: "VKMT_ALLOW_NON_SINGLE_TEXEL_ALIGNMENT", value: "1" },
+                    EnvVar { key: "MVK_CONFIG_USE_METAL_PRIVATE_API", value: "1" },
                     EnvVar { key: "MVK_CONFIG_FORCE_RETAINED_COMMAND_BUFFERS", value: "1" },
                 ],
                 launch_args: vec!["-windowed", "-ResX=1280", "-ResY=720", "-ForceRes"],
@@ -746,7 +738,7 @@ mod tests {
         assert!(!m12.winedllpath_dirs.contains(&"lib/dxmt/x86_64-windows"));
         assert!(!m12.winedllpath_dirs.contains(&"lib/dxmt_m12/x86_64-windows"));
 
-        // Deploys vkd3d-proton d3d12/d3d12core + DXVK dxgi; never DXMT.
+        // Deploys vkd3d-proton's D3D12 DLLs plus DXVK's DXGI; never DXMT.
         let m12_dlls: std::collections::HashSet<_> =
             m12.deploy_dlls.iter().map(|dll| (dll.source_subpath, dll.filename)).collect();
         for required in [

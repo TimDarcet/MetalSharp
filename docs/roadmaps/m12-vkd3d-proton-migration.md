@@ -21,22 +21,22 @@ D3D12 application -> vkd3d-proton 3.1.0 -> Vulkan loader -> patched MoltenVK 1.4
 ### vkd3d-proton — D3D12 implementation (M12's new core)
 | File | Arch | sha256 | Size |
 |---|---|---|---|
-| `runtime/wine/lib/vkd3d-proton/x86_64-windows/d3d12.dll` | x86-64 PE32+ | `7a34f49a8cf309e20df8f5418c133d8e6a00882155de5532eef2bd9b9f094f93` | 446,464 bytes (loader/forwarder) |
-| `runtime/wine/lib/vkd3d-proton/x86_64-windows/d3d12core.dll` | x86-64 PE32+ | `8b643bfbdc9acab92aee8c76ce971b9877f0b851cf6fe2aa04bc37cca5ac22e4` | 6,434,816 bytes (real impl) |
+| `runtime/wine/lib/vkd3d-proton/x86_64-windows/d3d12.dll` | x86-64 PE32+ | `1d7bbf9e4362cc892897665745fb9c28f71bf42b02a1e4293b1f3d02455f8dea` | loader/forwarder |
+| `runtime/wine/lib/vkd3d-proton/x86_64-windows/d3d12core.dll` | x86-64 PE32+ | `d907d630aa55ecab6cf8cd08f7d472538fd6a3787db2e77145950d1c4ad971e0` | implementation |
 | `build-vkmt-i386-clang/libs/d3d12/d3d12.dll` | i386 PE32 | `52cfe58b301771dc163fd45a5c0689bf22d1bc2396133456e7f2bd94cc3b87f1` | 32-bit lane (syswow64; not wired into M12 — M12 is 64-bit only) |
 | `build-vkmt-i386-clang/libs/d3d12core/d3d12core.dll` | i386 PE32 | `56abc44d741df607ccf4ae7d3cdbd801d592fba4124bccab1705661fefbeaad3` | 32-bit lane |
 
 ### MoltenVK — Vulkan-on-Metal (M12's new GPU backend)
 | File | Arch | sha256 |
 |---|---|---|
-| `runtime/wine/lib/moltenvk-vkmt/libMoltenVK.dylib` | Mach-O universal (x86_64 + arm64) | `50e41de23ce85260870c24cec11ac29b225704c6cb0366ce555dcd9ac03417f3` |
+| `runtime/wine/lib/moltenvk-vkmt/libMoltenVK.dylib` | Mach-O universal (x86_64 + arm64) | `7f64cf9270f104ac38d440efd197ce033be3aad7e1d42d552b03a4193b034534` |
 | `…/macOS/MoltenVK_icd.json` | — | `library_path: "./libMoltenVK.dylib"`, `api_version 1.4.0`, `is_portability_driver: true` |
 
 ### DXVK — d3d11/dxgi/d3d10/d3d9 surfaces (M12 DXGI + fallback pipelines)
 | File | Arch | sha256 |
 |---|---|---|
-| `runtime/wine/lib/dxvk/x86_64-windows/dxgi.dll` | x86-64 PE32+ | `9c0129b1be07217fdaef8d56bb23036a9069a49444de1dddce5a9e6cea474b15` (2,727,950 bytes) |
-| `…/build.64/src/d3d11/d3d11.dll` | x86-64 | `2c3c6da7ba491a60…` |
+| `runtime/wine/lib/dxvk/x86_64-windows/dxgi.dll` | x86-64 PE32+ | `0a1117b5077247d153f19d96cbfd270923087ac3251d2133132795c0df95c230` |
+| `…/build.64/src/d3d11/d3d11.dll` | x86-64 | `c21d28a3f061402bb30a6fbc51a7488e2b78013aa51e49e1c70dceacd66aced8` |
 | `…/build.64/src/d3d10/d3d10core.dll` | x86-64 | `eec55f7fe60e3182…` |
 | `…/build.64/src/d3d9/d3d9.dll` | x86-64 | `b9462dc3629ed6e1…` |
 | `…/build.32/src/{dxgi,d3d11,d3d10core,d3d9}.dll` | i386 | `f6c71a1a…`, `111ba088…`, `02aec3f7…`, `13e6182a…` |

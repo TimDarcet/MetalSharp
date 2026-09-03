@@ -12,6 +12,7 @@ const DEFAULT_BRIDGE_PORT: u16 = 18733;
 const FNA_CARBON_SHIM: &str = "libCarbon.dylib";
 const FNA_CARBON_INTERPOSE_SHIM: &str = "libmetalsharp_carbon_interpose.dylib";
 const FNA_XNA_WRAPPER_VERSION: &str = "22.12.2";
+const WINE_CPU_TOPOLOGY_SHIM: &str = "libmetalsharp_cpu_topology.dylib";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MonoArch {
@@ -1254,6 +1255,12 @@ fn sanitize_metalsharp_wine_wrapper_script(script: &str) -> String {
         "export DYLD_FALLBACK_LIBRARY_PATH=",
         dyld_line,
         "export WINEDATADIR=",
+    );
+    repaired = replace_or_insert_export_line(
+        &repaired,
+        "export DYLD_INSERT_LIBRARIES=",
+        r#"export DYLD_INSERT_LIBRARIES="${METALSHARP_DYLD_INSERT_LIBRARIES:-${DYLD_INSERT_LIBRARIES:-}}""#,
+        "export DYLD_FALLBACK_LIBRARY_PATH=",
     );
 
     // VK_ICD_FILENAMES must resolve inside the runtime (never a hardcoded
@@ -2903,6 +2910,7 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
     env.extend(cache_env_pairs(node, cache_paths.as_ref(), &ms_root));
     env.extend(node.env_vars.iter().map(|ev| (ev.key.to_string(), ev.value.to_string())));
     env.extend(app_compat_env_pairs(appid, node.id));
+    env.extend(cpu_topology_env(home, appid, node.id));
     if let Some(recipe) = super::rules::get_game_recipe(appid) {
         for (key, value) in recipe.env {
             if !is_reserved_route_env_key(node.id, &key) {
@@ -3161,6 +3169,8 @@ fn is_reserved_route_env_key(pipeline_id: PipelineId, key: &str) -> bool {
             | "DXMT_CONFIG_FILE"
             | "MS_GRAPHICS_BACKEND"
             | "WINEMSYNC"
+            | "METALSHARP_CPU_COUNT"
+            | "METALSHARP_DYLD_INSERT_LIBRARIES"
             | "DXMT_LOG_PATH"
     )
 }
@@ -3192,7 +3202,14 @@ fn app_compat_env_pairs_with_logs(
     }
 
     if appid == 1245620 && pipeline_id == PipelineId::M12 {
-        return vec![("VKD3D_FEATURE_LEVEL".to_string(), "12_0".to_string())];
+        let mut env = vec![("VKD3D_FEATURE_LEVEL".to_string(), "12_0".to_string())];
+        if graphics_runtime_logs {
+            env.extend([
+                ("MVK_CONFIG_PERFORMANCE_TRACKING".to_string(), "1".to_string()),
+                ("MVK_CONFIG_PERFORMANCE_LOGGING_FRAME_COUNT".to_string(), "300".to_string()),
+            ]);
+        }
+        return env;
     }
 
     if appid == 1962700 && pipeline_id == PipelineId::M12 {
@@ -3273,6 +3290,11 @@ fn apply_app_launch_env(cmd: &mut Command, appid: u32, pipeline_id: PipelineId) 
     for (key, value) in app_compat_env_pairs(appid, pipeline_id) {
         cmd.env(key, value);
     }
+    if let Some(home) = dirs::home_dir() {
+        for (key, value) in cpu_topology_env(&home, appid, pipeline_id) {
+            cmd.env(key, value);
+        }
+    }
     if let Some(recipe) = super::rules::get_game_recipe(appid) {
         for (key, value) in recipe.env {
             if !is_reserved_route_env_key(pipeline_id, &key) {
@@ -3322,6 +3344,10 @@ fn cache_env_pairs_with_logs(
         },
         "dxvk" => {
             env.push(("DXVK_STATE_CACHE_PATH".to_string(), shader_dir));
+            if !graphics_runtime_logs {
+                env.push(("DXVK_LOG_LEVEL".to_string(), "error".to_string()));
+                env.push(("MVK_CONFIG_LOG_LEVEL".to_string(), "1".to_string()));
+            }
             if graphics_runtime_logs {
                 env.push(("DXVK_LOG_PATH".to_string(), log_dir));
             }
@@ -3335,9 +3361,24 @@ fn cache_env_pairs_with_logs(
             // vkd3d-proton owns vkd3d-proton.cache; DXVK still owns dxgi/d3d11
             // state cache on this M12 route, so both providers need a path.
             env.push(("DXVK_STATE_CACHE_PATH".to_string(), shader_dir.clone()));
-            env.push(("VKD3D_SHADER_CACHE_PATH".to_string(), cache.vkd3d_shader.clone().unwrap_or(shader_dir)));
+            env.push(("VKD3D_SHADER_CACHE_PATH".to_string(), cache.vkd3d_shader.clone().unwrap_or(shader_dir.clone())));
+            if !graphics_runtime_logs {
+                env.extend([
+                    ("VKD3D_DEBUG".to_string(), "err".to_string()),
+                    ("VKD3D_SHADER_DEBUG".to_string(), "none".to_string()),
+                    ("DXVK_LOG_LEVEL".to_string(), "error".to_string()),
+                    ("MVK_CONFIG_LOG_LEVEL".to_string(), "1".to_string()),
+                ]);
+            }
             if graphics_runtime_logs {
-                env.push(("DXVK_LOG_PATH".to_string(), log_dir));
+                env.extend([
+                    ("DXVK_LOG_PATH".to_string(), log_dir.clone()),
+                    ("MVK_CONFIG_SHADER_DUMP_DIR".to_string(), log_dir),
+                    (
+                        "VKD3D_SHADER_DUMP_PATH".to_string(),
+                        cache.vkd3d_shader.clone().unwrap_or_else(|| shader_dir.trim_end_matches('/').to_string()),
+                    ),
+                ]);
             }
             let moltenvk_icd = ms_root.join("etc").join("vulkan").join("icd.d").join("MoltenVK_icd.json");
             if moltenvk_icd.exists() {
@@ -4231,18 +4272,18 @@ fn ensure_fna_native_shim_in_cache(spec: &FnaNativeShimSpec, shims_dir: &PathBuf
     match spec.source {
         FnaShimSource::RepoC { parts, undefined_dynamic_lookup } => {
             if let Some(source) = find_fna_shim_source(parts) {
-                let _ = build_fna_c_shim(&source, &dst, spec.output, &[], undefined_dynamic_lookup);
+                let _ = build_native_shim(&source, &dst, spec.output, &[], undefined_dynamic_lookup);
             }
         },
         FnaShimSource::RepoObjC { parts, frameworks } => {
             if let Some(source) = find_fna_shim_source(parts) {
-                let _ = build_fna_c_shim(&source, &dst, spec.output, frameworks, false);
+                let _ = build_native_shim(&source, &dst, spec.output, frameworks, false);
             }
         },
         FnaShimSource::BundledNative => {
             if let Some(source) = find_bundled_native_shim(spec.output) {
                 let _ = std::fs::copy(source, &dst);
-                codesign_fna_shim(&dst);
+                codesign_native_shim(&dst);
             }
         },
     }
@@ -4263,7 +4304,7 @@ fn ensure_fna_native_shim_in_cache(spec: &FnaNativeShimSpec, shims_dir: &PathBuf
     }
 }
 
-fn build_fna_c_shim(
+fn build_native_shim(
     source: &PathBuf,
     output: &PathBuf,
     install_name: &str,
@@ -4296,9 +4337,38 @@ fn build_fna_c_shim(
         .map(|status| status.success())
         .unwrap_or(false);
     if success {
-        codesign_fna_shim(output);
+        codesign_native_shim(output);
     }
     success
+}
+
+fn cpu_topology_env(home: &Path, appid: u32, pipeline_id: PipelineId) -> Vec<(String, String)> {
+    if appid != 1245620
+        || pipeline_id != PipelineId::M12
+        || crate::platform::current() != crate::platform::HostPlatform::Macos
+    {
+        return Vec::new();
+    }
+    let output =
+        crate::platform::metalsharp_home_dir_for(home).join("runtime").join("shims").join(WINE_CPU_TOPOLOGY_SHIM);
+    let source = find_repo_source(&["src", "wine", "cpu_topology_interpose.c"]).or_else(|| {
+        crate::platform::app_resources_dir()
+            .map(|resources| resources.join("runtime/shim-sources/wine/cpu_topology_interpose.c"))
+            .filter(|path| file_has_payload(path))
+    });
+    if let Some(source) = source {
+        let stale = std::fs::metadata(&source).and_then(|m| m.modified()).ok()
+            > std::fs::metadata(&output).and_then(|m| m.modified()).ok();
+        if (!file_has_payload(&output) || stale)
+            && !build_native_shim(&source, &output, WINE_CPU_TOPOLOGY_SHIM, &[], false)
+        {
+            return Vec::new();
+        }
+    }
+    if !file_has_payload(&output) {
+        return Vec::new();
+    }
+    vec![("METALSHARP_DYLD_INSERT_LIBRARIES".to_string(), output.to_string_lossy().to_string())]
 }
 
 fn fna_native_arch_args() -> Vec<&'static str> {
@@ -4341,7 +4411,7 @@ fn file_has_payload(path: &Path) -> bool {
     std::fs::metadata(path).map(|metadata| metadata.len() > 0).unwrap_or(false)
 }
 
-fn codesign_fna_shim(path: &PathBuf) {
+fn codesign_native_shim(path: &PathBuf) {
     if crate::platform::current() != crate::platform::HostPlatform::Macos || !path.exists() {
         return;
     }
@@ -4567,7 +4637,7 @@ fn fix_dylib_install_names(dylib_path: &PathBuf) {
         }
     }
 
-    codesign_fna_shim(dylib_path);
+    codesign_native_shim(dylib_path);
 }
 
 fn ensure_fna_symlink(game_dir: &PathBuf, lib: &str, sym: &str) {
@@ -6193,6 +6263,9 @@ export MVK_PRESENT_MODE="1"
         assert!(!repaired.contains("CX_ROOT"), "CX_ROOT emulation must be dropped");
         assert!(!repaired.contains("/opt/homebrew/etc/vulkan"), "Homebrew ICD path must not remain");
         assert!(repaired.contains("$MS_ROOT/etc/vulkan/icd.d/MoltenVK_icd.json"));
+        assert!(repaired.contains(
+            r#"export DYLD_INSERT_LIBRARIES="${METALSHARP_DYLD_INSERT_LIBRARIES:-${DYLD_INSERT_LIBRARIES:-}}""#
+        ));
         assert!(repaired.contains("if [ -f \"$MS_ROOT/etc/vulkan/icd.d/MoltenVK_icd.json\" ]; then"));
     }
 
@@ -6278,12 +6351,11 @@ export VK_ICD_FILENAMES="/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json"
 
     #[test]
     fn m12_pipeline_deploy_list_includes_d3d12_and_uses_vkd3d_surface() {
-        // Phase 3 contract: M12 must deploy the vkd3d-proton stack (d3d12,
-        // d3d12core, dxgi) — no DXMT artifacts at all.
+        // M12 deploys vkd3d-proton's D3D12 DLLs plus DXVK's DXGI/D3D11.
         let node = get_pipeline(PipelineId::M12);
         let filenames: Vec<&str> = node.deploy_dlls.iter().map(|d| d.filename).collect();
         let required = ["d3d12.dll", "d3d12core.dll", "dxgi.dll", "d3d11.dll"];
-        assert_eq!(filenames.len(), required.len(), "M12 deploy list must be the vkd3d 4-DLL set");
+        assert_eq!(filenames.len(), required.len(), "M12 deploy list must be the vkd3d/DXVK 4-DLL set");
         for required in required {
             assert!(filenames.contains(&required), "M12 deploy list must include {} (got {:?})", required, filenames);
         }
@@ -6291,7 +6363,7 @@ export VK_ICD_FILENAMES="/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json"
             assert!(
                 deploy.source_subpath.starts_with("lib/vkd3d-proton/")
                     || deploy.source_subpath.starts_with("lib/dxvk/"),
-                "M12 DLL {} must come from the vkd3d-proton/dxvk runtime surface",
+                "M12 DLL {} must come from the vkd3d-proton/DXVK runtime surface",
                 deploy.filename
             );
         }
@@ -6659,7 +6731,7 @@ export VK_ICD_FILENAMES="/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json"
     #[test]
     fn m12_pipeline_env_vars_set_vkd3d_overrides_and_shader_cache() {
         // Phase 3 contract: the M12 env builder must set the vkd3d-proton
-        // WINEDLLOVERRIDES (d3d12/d3d12core/dxgi native-first), carry the
+        // WINEDLLOVERRIDES (vkd3d/DXVK native), carry the
         // MoltenVK + VKMT launch env, and point the shader cache at the
         // isolated m12 lane. The M12 route no longer uses DXMT at all.
         let node = get_pipeline(PipelineId::M12);
@@ -6674,8 +6746,12 @@ export VK_ICD_FILENAMES="/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json"
             "M12 must set MVK_PRESENT_MODE=1"
         );
         assert!(
+            node.env_vars.iter().any(|ev| ev.key == "MVK_CONFIG_USE_METAL_PRIVATE_API" && ev.value == "1"),
+            "M12 must enable Metal private APIs for primitive restart"
+        );
+        assert!(
             node.env_vars.iter().any(|ev| ev.key == "MVK_CONFIG_FORCE_RETAINED_COMMAND_BUFFERS" && ev.value == "1"),
-            "M12 must globally force retained Metal command-buffer references for this diagnostic"
+            "M12 must retain Metal command-buffer references"
         );
         assert!(!node.env_vars.iter().any(|ev| ev.key.starts_with("DXMT_")), "M12 must not carry DXMT env vars");
         assert_eq!(node.shader_cache_subdir, Some("m12"), "M12 shader cache must be isolated under m12");
@@ -6691,7 +6767,7 @@ export VK_ICD_FILENAMES="/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json"
             vkd3d_shader: None,
         };
 
-        let env = cache_env_pairs(node, Some(&cache), &PathBuf::from("/tmp/metalsharp-runtime"));
+        let env = cache_env_pairs_with_logs(node, Some(&cache), &PathBuf::from("/tmp/metalsharp-runtime"), false);
         let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
 
         assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
@@ -6746,7 +6822,10 @@ export VK_ICD_FILENAMES="/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json"
             assert!(config.unwrap_or_default().contains("d3d11.preferredMaxFrameRate=60"));
             assert!(summary.unwrap_or_default().contains("/shader-cache/"));
             assert!(summary.unwrap_or_default().contains("/pipeline-cache/"));
-            assert!(!env.iter().any(|(key, _)| key == "DXMT_LOG_PATH"));
+            let cache = build_cache_paths(&home, node, 42);
+            let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime/wine");
+            let quiet_env = cache_env_pairs_with_logs(node, cache.as_ref(), &ms_root, false);
+            assert!(!quiet_env.iter().any(|(key, _)| key == "DXMT_LOG_PATH"));
             let _ = std::fs::remove_dir_all(home);
         }
     }
@@ -6757,23 +6836,58 @@ export VK_ICD_FILENAMES="/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json"
         let node = get_pipeline(PipelineId::M12);
         assert_eq!(node.backend, "vkd3d-proton");
 
-        let env = steam_pipeline_env_pairs(&home, node, 42);
+        let cache_paths = build_cache_paths(&home, node, 42);
+        let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime/wine");
+        let env = cache_env_pairs_with_logs(node, cache_paths.as_ref(), &ms_root, false);
         let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
         assert!(!keys.contains("DXMT_CONFIG"), "M12 must not set DXMT_CONFIG (vkd3d-proton backend)");
         assert!(!keys.contains("DXMT_CONFIG_FILE"), "M12 must not set DXMT_CONFIG_FILE");
         assert!(!keys.contains("DXMT_SHADER_CACHE_PATH"), "M12 must not set DXMT_SHADER_CACHE_PATH");
         assert!(keys.contains("DXVK_STATE_CACHE_PATH"), "M12 must route DXVK state cache");
         assert!(keys.contains("VKD3D_SHADER_CACHE_PATH"), "M12 must route vkd3d-proton's shader cache");
+        assert_eq!(env_value(&env, "VKD3D_DEBUG"), Some("err"));
+        assert_eq!(env_value(&env, "VKD3D_SHADER_DEBUG"), Some("none"));
+        assert_eq!(env_value(&env, "DXVK_LOG_LEVEL"), Some("error"));
+        assert_eq!(env_value(&env, "MVK_CONFIG_LOG_LEVEL"), Some("1"));
+
+        let verbose = cache_env_pairs_with_logs(node, cache_paths.as_ref(), &ms_root, true);
+        for key in ["VKD3D_DEBUG", "VKD3D_SHADER_DEBUG", "DXVK_LOG_LEVEL", "MVK_CONFIG_LOG_LEVEL"] {
+            assert!(!verbose.iter().any(|(name, _)| name == key));
+        }
+        assert_eq!(env_value(&verbose, "VKD3D_SHADER_DUMP_PATH"), Some(r"C:\metalsharp-cache\m12\42"));
+        assert!(env_value(&verbose, "MVK_CONFIG_SHADER_DUMP_DIR")
+            .unwrap_or_default()
+            .contains("/logs/m12-pipeline/42/"));
         let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]
     fn elden_ring_m12_advertises_required_d3d_feature_level() {
-        let env = app_compat_env_pairs(1245620, PipelineId::M12);
+        let env = app_compat_env_pairs_with_logs(1245620, PipelineId::M12, false);
 
         assert_eq!(env_value(&env, "VKD3D_FEATURE_LEVEL"), Some("12_0"));
+        assert!(!env.iter().any(|(key, _)| key == "MVK_CONFIG_PERFORMANCE_TRACKING"));
+        let diagnostics = app_compat_env_pairs_with_logs(1245620, PipelineId::M12, true);
+        assert_eq!(env_value(&diagnostics, "MVK_CONFIG_PERFORMANCE_TRACKING"), Some("1"));
+        assert_eq!(env_value(&diagnostics, "MVK_CONFIG_PERFORMANCE_LOGGING_FRAME_COUNT"), Some("300"));
         assert!(app_compat_env_pairs(1245620, PipelineId::M11).is_empty());
         assert!(app_compat_env_pairs(814380, PipelineId::M12).is_empty());
+    }
+
+    #[test]
+    fn elden_ring_m12_uses_performance_core_count_when_shim_is_available() {
+        let home = test_dir("elden-cpu-topology");
+        let shim =
+            crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("shims").join(WINE_CPU_TOPOLOGY_SHIM);
+        std::fs::create_dir_all(shim.parent().unwrap()).unwrap();
+        std::fs::write(&shim, b"shim").unwrap();
+
+        let env = cpu_topology_env(&home, 1245620, PipelineId::M12);
+
+        assert_eq!(env_value(&env, "METALSHARP_DYLD_INSERT_LIBRARIES"), Some(shim.to_string_lossy().as_ref()));
+        assert!(cpu_topology_env(&home, 1245620, PipelineId::M11).is_empty());
+        assert!(cpu_topology_env(&home, 814380, PipelineId::M12).is_empty());
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]
@@ -7070,7 +7184,7 @@ export WINEDEBUG="${WINEDEBUG:--all}"
         );
         let moltenvk_hash = crate::diagnostics::file_sha256(&mvk_dir.join("libMoltenVK.dylib")).expect("MoltenVK hash");
         assert_eq!(
-            moltenvk_hash, "50e41de23ce85260870c24cec11ac29b225704c6cb0366ce555dcd9ac03417f3",
+            moltenvk_hash, "7f64cf9270f104ac38d440efd197ce033be3aad7e1d42d552b03a4193b034534",
             "libMoltenVK.dylib must be the pinned deployed M12 build"
         );
         assert!(crate::installer::moltenvk_vkmt_runtime_ready_for_home(&home));
