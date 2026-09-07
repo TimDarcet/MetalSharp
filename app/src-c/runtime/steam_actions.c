@@ -18,6 +18,8 @@
 #include <sys/resource.h>
 #include <sys/types.h>
 #ifdef __APPLE__
+#include <CoreAudio/CoreAudio.h>
+#include <CoreFoundation/CoreFoundation.h>
 #include <libproc.h>
 #include <sys/sysctl.h>
 #endif
@@ -57,6 +59,41 @@ static char* preferred_steam_game_executable(const char* game_dir, unsigned id, 
 static char* find_steam_game_executable(const char* home, unsigned id, const char* pipeline);
 static bool body_id(const char* body, size_t len, unsigned* id);
 static void string_field(ms_json_writer* writer, const char* key, const char* value);
+
+static void prewarm_background_music(void) {
+#ifdef __APPLE__
+    AudioDeviceID device = kAudioObjectUnknown;
+    CFStringRef uid = NULL;
+    UInt32 size = sizeof(device);
+    AudioObjectPropertyAddress address = {kAudioHardwarePropertyDefaultOutputDevice,
+                                          kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
+    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, NULL, &size, &device) != noErr)
+        return;
+    address.mSelector = kAudioDevicePropertyDeviceUID;
+    size = sizeof(uid);
+    if (AudioObjectGetPropertyData(device, &address, 0, NULL, &size, &uid) != noErr || !uid)
+        return;
+    bool is_background_music = CFEqual(uid, CFSTR("BGMDevice"));
+    CFRelease(uid);
+    if (!is_background_music || access("/System/Library/Sounds/Funk.aiff", R_OK) != 0)
+        return;
+
+    pid_t child = fork();
+    if (child == 0) {
+        pid_t player = fork();
+        if (player == 0) {
+            execl("/usr/bin/afplay", "afplay", "-v", "0", "-r", "0.1",
+                  "/System/Library/Sounds/Funk.aiff", (char*)NULL);
+            _exit(127);
+        }
+        _exit(player < 0 ? 1 : 0);
+    }
+    if (child > 0) {
+        while (waitpid(child, NULL, 0) < 0 && errno == EINTR) {}
+        usleep(500000);
+    }
+#endif
+}
 
 static const char* controller_input_mode_for_home(const char* home) {
     char* configs = join(home, "configs");
@@ -3881,6 +3918,7 @@ static char* ms_steam_launch_game_json_internal(const char* home, const char* bo
         return err("required graphics runtime DLLs are missing");
     }
     free(game_dir);
+    prewarm_background_music();
     if (!strcmp(pipeline, "m13"))
         e = spawn_gptk_game(home, executable, id, pipeline, &pid);
     else if (!strcmp(pipeline, "d3dmetal"))
