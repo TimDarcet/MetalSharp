@@ -92,7 +92,7 @@ static const char* pipeline_name(const char* pipeline) {
     return "Wine";
 }
 static const char* graphics_backend(const char* pipeline) {
-    if (!strcmp(pipeline, "vkd3d"))
+    if (!strcmp(pipeline, "m12") || !strcmp(pipeline, "vkd3d"))
         return "vkd3d-proton";
     if (!strcmp(pipeline, "d3dmetal"))
         return "d3dmetal";

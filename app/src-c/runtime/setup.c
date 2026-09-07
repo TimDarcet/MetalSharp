@@ -23,7 +23,7 @@
 
 #define MS_DXMT_VERSION                MS_BACKEND_VERSION "-m12-isolated-surface-v1"
 #define MS_DXMT_MANIFEST               "metalsharp-dxmt-runtime.json"
-#define MS_MOLTENVK_LIBRARY_SHA256     "8249d81ebf2d46f82b16ca166c2e5cca5d76d91d0a412cd6d3db1aaa6e8430bf"
+#define MS_MOLTENVK_LIBRARY_SHA256     "7f64cf9270f104ac38d440efd197ce033be3aad7e1d42d552b03a4193b034534"
 #define MS_MOLTENVK_LANE_ICD_SHA256    "578ff08cd0d8734619357541771a5abc9c3470ca300030219a971a9e9dbbe466"
 #define MS_MOLTENVK_RUNTIME_ICD_SHA256 "0dcbf7707cc0a347d0ba2941e835e5e92709919370a1bb0fc252e8dc4d95d322"
 #define MS_DXMT_SCHEMA                 "metalsharp.dxmt-runtime.v1"

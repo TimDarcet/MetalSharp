@@ -83,14 +83,14 @@ static const char* const migration_m12_hashes[][2] = {
     {"x86_64-unix/libc++abi.1.dylib", "b819a65788f8f4e8bc1e67a601e8e3d59c52c14a74910e61f2e7307006340fb4"},
     {"x86_64-unix/libunwind.1.dylib", "105e72335d9e919e32028d151934b97d4b75267528023cb7f22111ac8065de0e"}};
 static const char* const migration_vkd3d_hashes[][2] = {
-    {"x86_64-windows/d3d12.dll", "ac2b8674798bdbdd21ce1aa48daf1e2657813ecc878b80e2641bf0d2c3f2a43e"},
-    {"x86_64-windows/d3d12core.dll", "78ab917a20dbc050ba3d0def8c0241e53c90ded0a036462955108e0ef78022a8"},
+    {"x86_64-windows/d3d12.dll", "1d7bbf9e4362cc892897665745fb9c28f71bf42b02a1e4293b1f3d02455f8dea"},
+    {"x86_64-windows/d3d12core.dll", "d907d630aa55ecab6cf8cd08f7d472538fd6a3787db2e77145950d1c4ad971e0"},
     {"x86_64-windows/dxgi.dll", "943dc921530aeba8bc5add09f5a3c5fac7da50e90a84ca2f41f1b87ba532846e"}};
 static const char* const migration_dxvk_hashes[][2] = {
     {"x86_64-windows/d3d9.dll", "67f8b1f139c7b4838de535876668c44716cec5dda56a1aa88bab5b820acd72fc"},
     {"x86_64-windows/d3d10core.dll", "d8616fc3c1e13b32562325202655d4ecba972b4043bdf8f0b7350d627b842c26"},
-    {"x86_64-windows/d3d11.dll", "e7cf78bdc3722b40f19919ada77cfb535bdb3708934eb6d4c13111f5454b8c74"},
-    {"x86_64-windows/dxgi.dll", "1568105bcbbb0a98e6f12f386725e8186483c985a3c95cfe1484cfef125ae63c"},
+    {"x86_64-windows/d3d11.dll", "c21d28a3f061402bb30a6fbc51a7488e2b78013aa51e49e1c70dceacd66aced8"},
+    {"x86_64-windows/dxgi.dll", "0a1117b5077247d153f19d96cbfd270923087ac3251d2133132795c0df95c230"},
     {"i386-windows/d3d9.dll", "3bbe4b5aa1445380223ab5ce98f9ea5ad91ab3599e3354b4e91943a017474dbd"},
     {"i386-windows/d3d10core.dll", "a7010f0a1b4eaa54b892c79fbdc01c83b6030770acd6045962fff05c142dfbeb"},
     {"i386-windows/d3d11.dll", "04a6393bff8da791eccc81f6e54012e148ec9f960d465405bf5e0c76f024f063"},
@@ -207,7 +207,7 @@ static bool migration_manifest_current(const char* path) {
 }
 
 static bool migration_moltenvk_current(const char* home) {
-    const char* library_hash = "8249d81ebf2d46f82b16ca166c2e5cca5d76d91d0a412cd6d3db1aaa6e8430bf";
+    const char* library_hash = "7f64cf9270f104ac38d440efd197ce033be3aad7e1d42d552b03a4193b034534";
     const char* lane_hash = "578ff08cd0d8734619357541771a5abc9c3470ca300030219a971a9e9dbbe466";
     const char* relative[] = {
         "runtime/wine/lib/wine/x86_64-unix/libMoltenVK.dylib", "runtime/wine/lib/wine/x86_64-unix/libMoltenVK.1.dylib",

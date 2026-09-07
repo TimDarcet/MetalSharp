@@ -23,9 +23,11 @@ struct pipeline {
 };
 
 static const struct pipeline pipelines[] = {
-    {"dxmt", "DXMT", "Auto-selected D3D9/D3D10/D3D11/D3D12 -> Metal via unified DXMT runtime", "dxmt", "dxmt", false, true},
-    {"m12", "M12", "D3D12 -> Metal via DXMT", "dxmt", "dxmt", false, true},
-    {"vkd3d", "VKD3D", "Direct3D 12 via VKD3D-Proton and the bundled MoltenVK Vulkan driver", "vulkan", "vulkan", false, true},
+    {"dxmt", "DXMT", "Auto-selected D3D9/D3D10/D3D11/D3D12 -> Metal via unified DXMT runtime", "dxmt", "dxmt", false,
+     true},
+    {"m12", "M12", "D3D12 -> VKD3D-Proton -> MoltenVK -> Metal", "vulkan", "vulkan", false, true},
+    {"vkd3d", "VKD3D", "Direct3D 12 via VKD3D-Proton and the bundled MoltenVK Vulkan driver", "vulkan", "vulkan", false,
+     true},
     {"m11", "M11", "D3D11 -> Metal via DXMT", "dxmt", "dxmt", false, true},
     {"m11_32", "M11(32)", "D3D11 -> Metal via DXMT (32-bit / i386)", "dxmt", "dxmt", false, true},
     {"m10", "M10", "D3D10 -> Metal via DXMT", "dxmt", "dxmt", false, true},
@@ -425,12 +427,13 @@ char* ms_mtsp_launch_shape_json(const char* query) {
                        : !strcmp(id, "m9")        ? "M9"
                        : !strcmp(id, "fna_arm64") ? "Mono/FNA"
                                                   : "M12";
-    const char* backend = !strcmp(id, "vkd3d")       ? "vulkan"
+    bool vulkan = !strcmp(id, "m12") || !strcmp(id, "vkd3d");
+    const char* backend = vulkan                     ? "vulkan"
                           : !strcmp(id, "d3dmetal")  ? "d3dmetal"
                           : !strcmp(id, "fna_arm64") ? "mono"
                                                      : "dxmt";
     const char* custom_exe = appid == 1145360 ? "x86/Hades.exe" : NULL;
-    const char* graphics = !strcmp(id, "vkd3d")       ? "vulkan"
+    const char* graphics = vulkan                     ? "vulkan"
                            : !strcmp(id, "d3dmetal")  ? "d3dmetal"
                            : !strcmp(id, "fna_arm64") ? "mono"
                                                       : "dxmt";
@@ -466,11 +469,13 @@ char* ms_mtsp_launch_shape_json(const char* query) {
     ms_json_writer_object_begin(&writer);
     ms_json_writer_key(&writer, "deploy_dlls");
     ms_json_writer_array_begin(&writer);
-    if (!strcmp(id, "vkd3d")) {
+    if (vulkan) {
         const char* files[] = {"d3d12.dll", "d3d12core.dll", "d3d11.dll", "d3d10core.dll", "d3d9.dll", "dxgi.dll"};
         const char* sources[] = {"vkd3d-proton/x86_64-windows", "vkd3d-proton/x86_64-windows", "dxvk/x86_64-windows",
                                  "dxvk/x86_64-windows",         "dxvk/x86_64-windows",         "dxvk/x86_64-windows"};
         for (size_t i = 0; i < 6; i++) {
+            if (!strcmp(id, "m12") && i >= 2 && strcmp(files[i], "d3d11.dll") && strcmp(files[i], "dxgi.dll"))
+                continue;
             ms_json_writer_object_begin(&writer);
             ms_json_writer_key(&writer, "arch");
             ms_json_writer_string(&writer, "64-bit");
@@ -486,17 +491,19 @@ char* ms_mtsp_launch_shape_json(const char* query) {
     ms_json_writer_array_end(&writer);
     ms_json_writer_key(&writer, "dyld_paths");
     ms_json_writer_array_begin(&writer);
-    if (!strcmp(id, "vkd3d"))
+    if (vulkan) {
+        ms_json_writer_string(&writer, "lib/moltenvk-vkmt");
         ms_json_writer_string(&writer, "lib/wine/x86_64-unix");
+    }
     ms_json_writer_array_end(&writer);
     ms_json_writer_key(&writer, "wine_overrides");
     ms_json_writer_string(
-        &writer, !strcmp(id, "vkd3d")
-                     ? "d3d12,d3d12core,d3d11,d3d10core,dxgi,d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"
-                     : "");
+        &writer, !strcmp(id, "m12") ? "d3d12,d3d12core,dxgi,d3d11=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"
+                 : vulkan ? "d3d12,d3d12core,d3d11,d3d10core,dxgi,d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"
+                          : "");
     ms_json_writer_key(&writer, "winedllpath_dirs");
     ms_json_writer_array_begin(&writer);
-    if (!strcmp(id, "vkd3d")) {
+    if (vulkan) {
         ms_json_writer_string(&writer, "vkd3d-proton/x86_64-windows");
         ms_json_writer_string(&writer, "dxvk/x86_64-windows");
         ms_json_writer_string(&writer, "lib/wine/x86_64-windows");
