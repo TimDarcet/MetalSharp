@@ -1,4 +1,4 @@
-# Elden Ring M12 validated stack
+# Elden Ring VKD3D validation
 
 Validated on Apple M4 Pro with MetalSharp 0.61.0 and Wine 11.5 x86_64 through Rosetta. FEX is not used.
 
@@ -10,8 +10,8 @@ Validated on Apple M4 Pro with MetalSharp 0.61.0 and Wine 11.5 x86_64 through Ro
 | DXVK 3.0.2 | `TimDarcet/dxvk`, tag `metalsharp-elden-ring-20260903` | `dxgi.dll` `0a1117b5077247d153f19d96cbfd270923087ac3251d2133132795c0df95c230`; `d3d11.dll` `c21d28a3f061402bb30a6fbc51a7488e2b78013aa51e49e1c70dceacd66aced8` |
 | MetalSharp backend | `TimDarcet/MetalSharp`, commit `6b26e052853deb4dfff6d32ed0d08ca40d02d2c5` | Rust implementation used for validation |
 
-The tagged releases contain the validated binaries. M12 stages vkd3d-proton and DXVK DLLs in the game directory, never in the shared Steam prefix `system32`. Both MoltenVK filenames live in `runtime/wine/lib/moltenvk-vkmt/`; the Wine directory keeps `libMoltenVK.dylib` linked to `libMoltenVK.1.dylib`.
+These hashes record the original validation stack; they are not the MetalSharp bundle manifest. MetalSharp retains the currently published VKD3D, DXVK, and MoltenVK artifacts and routes this configuration through `vkd3d`. M12 remains the isolated DXMT D3D12 route.
 
 No shader replacement, shader skip, or draw drop was enabled. Validation covered cold and warm vkd3d caches, 80 captured tessellation shaders, world rendering, movement, and attacks. The logs contained no Metal shader compilation failure, primitive-restart warning, device loss, invalid resource, or page fault.
 
-For Elden Ring M12, a narrowly scoped shim reports the performance-core logical CPU count to Wine. Before a direct launch, MetalSharp resets an orphaned Wine server only when no Wine client is running.
+For Elden Ring on VKD3D, a narrowly scoped shim reports the performance-core logical CPU count to Wine. Before a direct launch, MetalSharp resets an orphaned Wine server only when no Wine client is running.

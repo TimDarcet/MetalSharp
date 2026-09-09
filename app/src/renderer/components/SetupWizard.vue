@@ -19,6 +19,7 @@ const installStatus = ref("");
 const installing = ref(false);
 const installLogs = ref<{ text: string; cls: string }[]>([]);
 const steamInstalled = ref(false);
+const steamChecking = ref(false);
 const steamInstalling = ref(false);
 const installingSteam = ref(false);
 const brewChecking = ref(true);
@@ -131,14 +132,32 @@ async function startInstall() {
 }
 
 async function checkSteam() {
-  const s = await api<{ installed: boolean; running: boolean }>("GET", "/steam/status");
-  if (s?.installed || s?.running) {
-    steamInstalled.value = true;
-  }
+  const s = await api<{ installed: boolean; running: boolean; installing?: boolean }>("GET", "/steam/status");
+  steamInstalled.value = s?.installed === true && s?.installing !== true;
   installingSteam.value = true;
 }
 
+async function goToVcppStep() {
+  if (installStatus.value !== "complete" || !steamInstalled.value || steamInstalling.value || steamChecking.value) return;
+  steamChecking.value = true;
+  try {
+    // Installation completion must be confirmed, not inferred from a running client.
+    await checkSteam();
+    if (steamInstalled.value && !steamInstalling.value) {
+      step.value = 3;
+    } else {
+      toast.show("Wait until Steam is detected as installed before continuing.", "error");
+    }
+  } catch {
+    steamInstalled.value = false;
+    toast.show("Could not confirm Steam installation. Please try again.", "error");
+  } finally {
+    steamChecking.value = false;
+  }
+}
+
 async function installSteam() {
+  steamInstalled.value = false;
   steamInstalling.value = true;
   const result = await api<{ ok: boolean; error?: string }>("POST", "/steam/install");
   if (!result?.ok) {
@@ -147,8 +166,8 @@ async function installSteam() {
     return;
   }
   const poll = setInterval(async () => {
-    const s = await api<{ installed: boolean; running: boolean }>("GET", "/steam/status");
-    if (s?.installed || s?.running) {
+    const s = await api<{ installed: boolean; running: boolean; installing?: boolean }>("GET", "/steam/status");
+    if (s?.installed && !s?.installing) {
       clearInterval(poll);
       steamInstalled.value = true;
       steamInstalling.value = false;
@@ -185,8 +204,8 @@ async function finish() {
     }
   }
 
-  await api("POST", "/steam/stop");
-
+  // Do not stop Wine Steam here. Steam may still be completing its first
+  // x64 client update, and killing the prefix at this point leaves it partial.
   emit("done");
 }
 
@@ -342,7 +361,14 @@ async function installVcppX86() {
 
         <div class="setup-actions">
           <button class="btn btn-secondary" @click="step = 1">Back</button>
-          <button v-if="installStatus === 'complete'" class="btn btn-primary btn-lg" @click="step = 3">Next: VC++ Runtimes</button>
+          <button
+            v-if="installStatus === 'complete'"
+            class="btn btn-primary btn-lg"
+            :disabled="!steamInstalled || steamInstalling || steamChecking"
+            @click="goToVcppStep"
+          >
+            {{ steamChecking ? "Checking Steam..." : "Next: VC++ Runtimes" }}
+          </button>
         </div>
       </div>
 

@@ -256,12 +256,14 @@ export class BackendBridge {
 
   private spawnBackend(binPath: string) {
     const homebrewInstaller = path.resolve(path.dirname(binPath), "..", "scripts/tools/install-homebrew.sh");
+    const bundleDir = path.resolve(path.dirname(binPath), "..", "bundles");
     this.proc = spawn(binPath, [], {
       env: {
         ...process.env,
         PATH: shellPath,
         METALSHARP_HOMEBREW_INSTALLER: homebrewInstaller,
         METALSHARP_CPU_TOPOLOGY_SOURCE: path.join(path.dirname(binPath), "shim-sources/wine/cpu_topology_interpose.c"),
+        ...(fs.existsSync(bundleDir) ? { METALSHARP_BUNDLE_DIR: bundleDir } : {}),
         METALSHARP_PORT: String(this.port),
         ...(this.metalsharpHome ? { METALSHARP_HOME: this.metalsharpHome } : {}),
         ...(this.devMode ? { METALSHARP_DEV: "1" } : {}),

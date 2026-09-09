@@ -294,11 +294,11 @@ char* ms_update_check_json(void) {
     ms_json_writer writer;
     char* result;
     if (text == NULL)
-        return strdup("{\"ok\":false,\"error\":\"failed to fetch release\",\"current_version\":\"0.61.0\"}");
+        return strdup("{\"ok\":false,\"error\":\"failed to fetch release\",\"current_version\":\"0.65.0\"}");
     release = ms_json_parse(text, strlen(text), error, sizeof(error));
     free(text);
     if (release == NULL)
-        return strdup("{\"ok\":false,\"error\":\"failed to parse release\",\"current_version\":\"0.61.0\"}");
+        return strdup("{\"ok\":false,\"error\":\"failed to parse release\",\"current_version\":\"0.65.0\"}");
     tag = release_field_json(release, "tag_name");
     latest = clean_version(tag);
     name = release_field_json(release, "name");
@@ -353,8 +353,10 @@ static bool write_progress(const char* home, const char* status, unsigned percen
     char* path = progress_path(home);
     ms_json_writer writer;
     char* json;
-    FILE* file;
-    bool ok;
+    char* temporary;
+    FILE* file = NULL;
+    int fd;
+    bool ok = false;
     if (path == NULL)
         return false;
     ms_json_writer_init(&writer);
@@ -376,10 +378,30 @@ static bool write_progress(const char* home, const char* status, unsigned percen
         free(path);
         return false;
     }
-    file = fopen(path, "wb");
-    ok = file != NULL && fputs(json, file) >= 0 && fclose(file) == 0;
-    if (file != NULL && !ok)
-        fclose(file);
+    /* Readers poll this file while the download worker updates it. Writing
+     * directly to the destination exposes the truncate-before-write window
+     * and can return an empty, invalid JSON response. Publish a complete file
+     * with an atomic same-directory rename instead. */
+    temporary = malloc(strlen(path) + sizeof(".tmp.XXXXXX"));
+    if (temporary != NULL) {
+        snprintf(temporary, strlen(path) + sizeof(".tmp.XXXXXX"), "%s.tmp.XXXXXX", path);
+        fd = mkstemp(temporary);
+        if (fd >= 0) {
+            file = fdopen(fd, "wb");
+            if (file != NULL) {
+                bool complete = fputs(json, file) >= 0 && fflush(file) == 0 && fsync(fd) == 0;
+                complete = fclose(file) == 0 && complete;
+                file = NULL;
+                if (complete)
+                    ok = rename(temporary, path) == 0;
+            } else {
+                close(fd);
+            }
+            if (!ok)
+                unlink(temporary);
+        }
+        free(temporary);
+    }
     free(json);
     free(path);
     return ok;
@@ -536,6 +558,9 @@ char* ms_update_start_json(const char* metalsharp_home, const unsigned char* bod
         ms_json* json = info == NULL ? NULL : ms_json_parse(info, strlen(info), error, sizeof(error));
         char* url = json == NULL ? NULL : release_field_json(json, fex ? "fex_download_url" : "download_url");
         char* latest = json == NULL ? NULL : release_field_json(json, "latest_version");
+        long long download_size = 0;
+        if (json)
+            (void)ms_json_as_i64(ms_json_object_get(json, fex ? "fex_download_size" : "download_size"), &download_size);
         free(info);
         ms_json_free(json);
         if (url == NULL || latest == NULL || url[0] == '\0') {
@@ -559,9 +584,34 @@ char* ms_update_start_json(const char* metalsharp_home, const unsigned char* bod
                     }
                     if (curl_pid > 0) {
                         int curl_status = 0;
-                        if (waitpid(curl_pid, &curl_status, 0) == curl_pid && WIFEXITED(curl_status) &&
-                            WEXITSTATUS(curl_status) == 0)
-                            downloaded = true;
+                        for (;;) {
+                            pid_t waited = waitpid(curl_pid, &curl_status, WNOHANG);
+                            if (waited == curl_pid) {
+                                downloaded = WIFEXITED(curl_status) && WEXITSTATUS(curl_status) == 0;
+                                break;
+                            }
+                            if (waited < 0) {
+                                if (errno == EINTR)
+                                    continue;
+                                break;
+                            }
+                            struct stat st;
+                            if (stat(tmp, &st) == 0 && st.st_size >= 0) {
+                                /* Reserve 80-100 for installation. Never report completion
+                                 * before curl succeeds and the temporary file is renamed. */
+                                double fraction = download_size > 0 ? (double)st.st_size / download_size : 0;
+                                unsigned percent = 10 + (unsigned)(69 * (fraction > 1 ? 1 : fraction));
+                                char message[128];
+                                if (download_size > 0)
+                                    snprintf(message, sizeof(message), "Downloading DMG: %.1f / %.1f MiB",
+                                             (double)st.st_size / 1048576, (double)download_size / 1048576);
+                                else
+                                    snprintf(message, sizeof(message), "Downloading DMG: %.1f MiB",
+                                             (double)st.st_size / 1048576);
+                                (void)write_progress(metalsharp_home, "downloading", percent, message, NULL);
+                            }
+                            sleep(1);
+                        }
                     }
                 }
                 if (downloaded && rename(tmp, dest) == 0) {

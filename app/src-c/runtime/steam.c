@@ -98,28 +98,35 @@ static const char* steam_icon_tool(const char* name) {
     return NULL;
 }
 
-static char* steam_embedded_icon(const char* game_directory) {
-    const char* wrestool = steam_icon_tool("wrestool");
-    const char* icotool = steam_icon_tool("icotool");
-    char* cache = join_path(game_directory, ".metalsharp/steam-embedded-icon.png");
-    char* output = join_path(game_directory, ".metalsharp/steam-icon");
-    char* resource = output ? join_path(output, "resource.ico") : NULL;
+static char* steam_embedded_icon(const char* game_directory, bool refresh) {
+    const char* wrestool;
+    const char* icotool;
+    char* cache = game_directory ? join_path(game_directory, ".metalsharp/steam-embedded-icon.png") : NULL;
+    char* output;
+    char* resource;
     char* executable = NULL;
     int score = -1;
     DIR* dir;
     struct dirent* entry;
     int status = 0;
     pid_t pid;
-    if (!game_directory || !wrestool || !icotool || !cache || !output || !resource) {
+    if (!cache)
+        return NULL;
+    if (steam_regular_file(cache))
+        return cache;
+    if (!refresh) {
+        free(cache);
+        return NULL;
+    }
+    wrestool = steam_icon_tool("wrestool");
+    icotool = steam_icon_tool("icotool");
+    output = join_path(game_directory, ".metalsharp/steam-icon");
+    resource = output ? join_path(output, "resource.ico") : NULL;
+    if (!wrestool || !icotool || !output || !resource) {
         free(cache);
         free(output);
         free(resource);
         return NULL;
-    }
-    if (steam_regular_file(cache)) {
-        free(output);
-        free(resource);
-        return cache;
     }
     {
         char* cache_directory = join_path(game_directory, ".metalsharp");
@@ -618,8 +625,8 @@ static void save_owned_games_cache(const char* path, const ms_json* array) {
     free(text);
 }
 
-static bool load_owned_games(const char* home, const char* key, const char* steam_id, steam_game** games, size_t* count,
-                             size_t* capacity) {
+static bool load_owned_games(const char* home, const char* key, const char* steam_id, bool refresh, steam_game** games,
+                             size_t* count, size_t* capacity) {
     char* path = join_path(home, "cache/owned_games.json");
     char* text = path ? read_file(path, NULL) : NULL;
     char error[128];
@@ -628,8 +635,8 @@ static bool load_owned_games(const char* home, const char* key, const char* stea
     time_t now = time(NULL);
     const ms_json* array = json ? ms_json_object_get(json, "games") : NULL;
     bool valid_cache = json && ms_json_as_i64(ms_json_object_get(json, "timestamp"), &timestamp) && timestamp >= 0 &&
-                       now >= (time_t)timestamp && (unsigned long long)(now - (time_t)timestamp) < 3600 && array &&
-                       ms_json_type_of(array) == MS_JSON_ARRAY;
+                       now >= (time_t)timestamp && (!refresh || (unsigned long long)(now - (time_t)timestamp) < 3600) &&
+                       array && ms_json_type_of(array) == MS_JSON_ARRAY;
     if (valid_cache) {
         append_owned_array(array, games, count, capacity);
         ms_json_free(json);
@@ -639,7 +646,7 @@ static bool load_owned_games(const char* home, const char* key, const char* stea
     }
     ms_json_free(json);
     free(text);
-    if (!path || !steam_query_value_safe(key) || !steam_query_value_safe(steam_id)) {
+    if (!refresh || !path || !steam_query_value_safe(key) || !steam_query_value_safe(steam_id)) {
         free(path);
         return false;
     }
@@ -752,9 +759,9 @@ static const char* pipeline_display_name(const char* pipeline) {
     return "VKD3D";
 }
 
-static void write_library_game(ms_json_writer* w, const char* home, const steam_game* game) {
+static void write_library_game(ms_json_writer* w, const char* home, const steam_game* game, bool refresh) {
     char cover[256], header[256];
-    char* embedded_icon = game->installed && game->game_dir ? steam_embedded_icon(game->game_dir) : NULL;
+    char* embedded_icon = game->installed && game->game_dir ? steam_embedded_icon(game->game_dir, refresh) : NULL;
     char preferred[64] = "";
     const char* recommended = default_pipeline_for_appid(game->appid);
     const char* effective = bottle_string_value(home, game->appid, "preferred_pipeline", preferred, sizeof(preferred))
@@ -827,7 +834,7 @@ static void write_library_game(ms_json_writer* w, const char* home, const steam_
     free(embedded_icon);
 }
 
-char* ms_steam_library_json(const char* metalsharp_home) {
+static char* steam_library_json(const char* metalsharp_home, bool refresh) {
     const char* home = getenv("HOME");
     steam_game* games = NULL;
     size_t count = 0, capacity = 0, i;
@@ -853,7 +860,7 @@ char* ms_steam_library_json(const char* metalsharp_home) {
         free(path);
     }
     if (api_key && steam_id)
-        (void)load_owned_games(metalsharp_home, api_key, steam_id, &games, &count, &capacity);
+        (void)load_owned_games(metalsharp_home, api_key, steam_id, refresh, &games, &count, &capacity);
     ms_json_writer_init(&w);
     ms_json_writer_object_begin(&w);
     ms_json_writer_key(&w, "ok");
@@ -893,7 +900,7 @@ char* ms_steam_library_json(const char* metalsharp_home) {
     ms_json_writer_array_begin(&w);
     for (i = 0; i < count; ++i)
         if (!hidden_library_game(&games[i]))
-            write_library_game(&w, metalsharp_home, &games[i]);
+            write_library_game(&w, metalsharp_home, &games[i], refresh);
     ms_json_writer_array_end(&w);
     ms_json_writer_object_end(&w);
     result = ms_json_writer_take(&w);
@@ -903,6 +910,14 @@ char* ms_steam_library_json(const char* metalsharp_home) {
     }
     free(games);
     return result;
+}
+
+char* ms_steam_library_json(const char* metalsharp_home) {
+    return steam_library_json(metalsharp_home, false);
+}
+
+char* ms_steam_library_refresh_json(const char* metalsharp_home) {
+    return steam_library_json(metalsharp_home, true);
 }
 
 char* ms_steam_game_dir(const char* metalsharp_home, unsigned appid) {
@@ -1134,7 +1149,7 @@ char* ms_steam_save_api_key_json(const char* metalsharp_home, const unsigned cha
     }
     free(json);
     (void)unlink(owned);
-    result = ms_steam_library_json(metalsharp_home);
+    result = ms_steam_library_refresh_json(metalsharp_home);
     if (result != NULL) {
         char* library = result;
         ms_json_writer_init(&writer);
@@ -1183,14 +1198,19 @@ char* ms_steam_status_json(const char* metalsharp_home) {
     const char* home = getenv("HOME");
     char* wine_prefix = join_path(metalsharp_home, "prefix-steam/drive_c/Program Files (x86)/Steam");
     char* wine_exe = wine_prefix == NULL ? NULL : join_path(wine_prefix, "Steam.exe");
+    char* steam_x64 = wine_prefix == NULL ? NULL : join_path(wine_prefix, "steamclient64.dll");
+    char* steam_manifest64 =
+        wine_prefix == NULL ? NULL : join_path(wine_prefix, "package/steam_client_win64.installed");
     char* wine = join_path(metalsharp_home, "runtime/wine/bin/wine");
     char* wine_wrapper = join_path(metalsharp_home, "runtime/wine/bin/metalsharp-wine");
     char* install_lock = join_path(metalsharp_home, ".steam-installing");
     char* mac_app = home == NULL ? NULL : join_path(home, "Applications/Steam.app");
     char* mac_bundle =
         home == NULL ? NULL : join_path(home, "Library/Application Support/Steam/Steam.AppBundle/Steam/Steam.app");
-    bool windows_installed = wine_exe != NULL && access(wine_exe, F_OK) == 0;
     bool installing = install_lock != NULL && access(install_lock, F_OK) == 0;
+    bool windows_installed = wine_exe != NULL && steam_x64 != NULL && steam_manifest64 != NULL &&
+                             access(wine_exe, F_OK) == 0 && access(steam_x64, F_OK) == 0 &&
+                             access(steam_manifest64, F_OK) == 0 && !installing;
     bool mac_installed = access("/Applications/Steam.app", F_OK) == 0 ||
                          (mac_app != NULL && access(mac_app, F_OK) == 0) ||
                          (mac_bundle != NULL && access(mac_bundle, F_OK) == 0);
@@ -1250,6 +1270,8 @@ char* ms_steam_status_json(const char* metalsharp_home) {
     result = ms_json_writer_take(&writer);
     free(wine_prefix);
     free(wine_exe);
+    free(steam_x64);
+    free(steam_manifest64);
     free(wine);
     free(wine_wrapper);
     free(install_lock);
